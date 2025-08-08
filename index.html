@@ -3,140 +3,124 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Pole Inspector (ZXing Fallback)</title>
-  <style>
-    body { font-family: system-ui, sans-serif; margin: 20px; }
-    .btn { padding: 10px 16px; background: #0b5ed7; color: white; border: none; border-radius: 8px; margin: 4px 0; }
-    .log { background: #f3f4f6; padding: 8px; border-radius: 6px; font-size: 14px; white-space: pre-wrap; margin-top: 8px; }
-    input, textarea { width: 100%; margin: 4px 0; }
-    video { width: 100%; border: 1px solid #ccc; border-radius: 8px; margin-top: 8px; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Pole Inspector — iOS Scanner Flow</title>
+  <meta name="theme-color" content="#0b5ed7" />
+  <link rel="stylesheet" href="style.css" />
 </head>
 <body>
-  <h1>Pole Inspector</h1>
-  <button id="startScan" class="btn">Start Scan</button>
-  <button id="scanPhoto" class="btn">Scan from Photo</button>
-  <input type="file" id="fileInput" accept="image/*" style="display:none" />
+  <header>
+    <h1>Pole Inspector</h1>
+    <p>Use iOS Code Scanner (Control Center) to open this page with the pole code, or paste a code directly. Edit height, status, GPS and photos.</p>
+  </header>
 
-  <video id="video" autoplay playsinline></video>
-  <div id="log" class="log"></div>
+  <main>
+    <section id="scan-section">
+      <div class="card">
+        <h2>Code</h2>
+        <div class="controls">
+          <input id="f-id" class="code-input" placeholder="e.g., NS-7003-001" />
+          <button id="btn-paste">Paste</button>
+          <button id="btn-clear">Clear</button>
+        </div>
+        <div class="hint small">
+          iPhone tip: Open <b>Control Center → Code Scanner</b> and scan a QR that encodes a URL like:<br/>
+          <code>https://YOUR-SITE/?id=NS-7003-001</code> or <code>https://YOUR-SITE/#NS-7003-001</code>.<br/>
+          This page will auto-fill based on <b>id</b> or <b>#hash</b>.
+        </div>
+        <div id="scan-help" class="hint small hidden"></div>
+      </div>
+    </section>
 
-  <h3>Edit Pole Data</h3>
-  <label>Serial:</label><input id="serial" />
-  <label>Height:</label><input id="height" />
-  <label>Status:</label><input id="status" />
-  <label>Location:</label><input id="location" />
-  <label>Notes:</label><textarea id="notes"></textarea>
-  <button id="saveData" class="btn">Save</button>
+    <section id="form-section">
+      <div class="card">
+        <h2>Record</h2>
+        <form id="pole-form">
+          <div class="grid">
+            <label>Height (m)
+              <input id="f-height" type="number" step="0.1" min="0" placeholder="e.g., 12.5" />
+            </label>
 
-  <script>
-    const logEl = document.getElementById('log');
-    const log = (msg) => { logEl.textContent += msg + "\n"; console.log(msg); };
+            <label>Status
+              <select id="f-status">
+                <option value="">— Select —</option>
+                <option value="OK">OK</option>
+                <option value="Watch">Watch</option>
+                <option value="Repair">Repair</option>
+                <option value="Replace">Replace</option>
+              </select>
+            </label>
 
-    let stream, video = document.getElementById('video');
+            <label>Latitude
+              <input id="f-lat" inputmode="decimal" placeholder="Auto or manual" />
+            </label>
 
-    async function startCameraScan() {
-      log("Starting camera...");
-      try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" } });
-        video.srcObject = stream;
-        if ('BarcodeDetector' in window) {
-          const detector = new BarcodeDetector({ formats: ['qr_code', 'code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e'] });
-          log("Using BarcodeDetector API.");
-          scanWithDetector(detector);
-        } else {
-          log("BarcodeDetector not supported, loading ZXing...");
-          await loadZXing();
-          scanWithZXing();
-        }
-      } catch (err) {
-        log("Failed to start camera: " + err);
-      }
-    }
+            <label>Longitude
+              <input id="f-lng" inputmode="decimal" placeholder="Auto or manual" />
+            </label>
 
-    function scanWithDetector(detector) {
-      const scan = async () => {
-        try {
-          const barcodes = await detector.detect(video);
-          if (barcodes.length > 0) {
-            handleScanResult(barcodes[0].rawValue);
-            return;
-          }
-        } catch(e) { log("Detector error: " + e); }
-        requestAnimationFrame(scan);
-      };
-      scan();
-    }
+            <label>Accuracy (m)
+              <input id="f-acc" inputmode="decimal" placeholder="Auto" />
+            </label>
 
-    function scanWithZXing() {
-      if (!window.ZXing) { log("ZXing not loaded."); return; }
-      const codeReader = new ZXing.BrowserMultiFormatReader();
-      codeReader.decodeFromVideoDevice(null, 'video', (result, err) => {
-        if (result) {
-          handleScanResult(result.text);
-        }
-      });
-    }
+            <label>Notes
+              <textarea id="f-notes" rows="3" placeholder="Optional"></textarea>
+            </label>
 
-    function handleScanResult(code) {
-      log("Scanned: " + code);
-      document.getElementById('serial').value = code;
-      stopCamera();
-    }
+            <label>Updated At
+              <input id="f-updated" disabled />
+            </label>
+          </div>
 
-    function stopCamera() {
-      if (stream) stream.getTracks().forEach(t => t.stop());
-    }
+          <div class="controls">
+            <button type="button" id="btn-locate">Get current location</button>
+            <button type="submit" id="btn-save">Save</button>
+            <button type="button" id="btn-new">New</button>
+            <button type="button" id="btn-delete" class="danger">Delete</button>
+          </div>
 
-    async function scanFromPhoto(file) {
-      if ('BarcodeDetector' in window) {
-        const detector = new BarcodeDetector({ formats: ['qr_code', 'code_128', 'code_39', 'ean_13', 'ean_8', 'upc_a', 'upc_e'] });
-        const img = await createImageBitmap(file);
-        const barcodes = await detector.detect(img);
-        if (barcodes.length > 0) handleScanResult(barcodes[0].rawValue);
-        else log("No barcode found in image.");
-      } else {
-        await loadZXing();
-        const codeReader = new ZXing.BrowserMultiFormatReader();
-        const url = URL.createObjectURL(file);
-        codeReader.decodeFromImageUrl(url).then(result => {
-          handleScanResult(result.text);
-        }).catch(err => log("Failed to scan image: " + err));
-      }
-    }
+          <div class="photos">
+            <h3>Photos</h3>
+            <div class="controls">
+              <button type="button" id="btn-photo-attach">Attach photo</button>
+              <button type="button" id="btn-photo-insert">Insert photo into notes</button>
+              <input type="file" id="photo-file" accept="image/*" capture="environment" hidden />
+            </div>
+            <div id="photo-grid" class="photo-grid"></div>
+          </div>
+        </form>
+      </div>
+    </section>
 
-    function loadZXing() {
-      return new Promise((resolve, reject) => {
-        if (window.ZXing) return resolve();
-        const script = document.createElement('script');
-        script.src = './zxing.min.js'; // must be in same dir
-        script.onload = () => resolve();
-        script.onerror = () => reject("Failed to load zxing.min.js");
-        document.body.appendChild(script);
-      });
-    }
+    <section id="list-section">
+      <div class="card">
+        <h2>Data</h2>
+        <div class="controls">
+          <input id="search" placeholder="Filter by code (fuzzy match)" />
+          <button id="btn-export">Export CSV</button>
+          <label class="file-label">
+            Import CSV
+            <input type="file" id="import-file" accept=".csv,text/csv" hidden />
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table id="data-table">
+            <thead>
+              <tr>
+                <th>Code</th><th>Height(m)</th><th>Status</th><th>Lat</th><th>Lng</th><th>Acc(m)</th><th>Photos</th><th>Updated</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
 
-    document.getElementById('startScan').addEventListener('click', startCameraScan);
-    document.getElementById('scanPhoto').addEventListener('click', () => {
-      document.getElementById('fileInput').click();
-    });
-    document.getElementById('fileInput').addEventListener('change', (e) => {
-      if (e.target.files.length > 0) {
-        scanFromPhoto(e.target.files[0]);
-      }
-    });
-    document.getElementById('saveData').addEventListener('click', () => {
-      const data = {
-        serial: document.getElementById('serial').value,
-        height: document.getElementById('height').value,
-        status: document.getElementById('status').value,
-        location: document.getElementById('location').value,
-        notes: document.getElementById('notes').value
-      };
-      log("Data saved: " + JSON.stringify(data));
-      alert("Data saved locally (console log).");
-    });
-  </script>
+  <footer>
+    <small>Offline-capable. Data is saved to this device (IndexedDB).</small>
+  </footer>
+
+  <script src="app.js"></script>
 </body>
 </html>
