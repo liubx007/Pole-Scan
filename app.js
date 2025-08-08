@@ -2,7 +2,7 @@
 // ===== IndexedDB wrapper =====
 const DB_NAME = 'poleDB';
 const DB_STORE = 'poles';
-const DB_VER = 7; // bump for calcDiaPct
+const DB_VER = 9; // v5: XRF fingerprint as select
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -65,15 +65,23 @@ async function dbAll() {
 
 // ===== UI refs =====
 const idInput = document.getElementById('f-id');
+const speciesInput = document.getElementById('f-species');
 const heightInput = document.getElementById('f-height');
 const statusInput = document.getElementById('f-status');
-const speciesInput = document.getElementById('f-species');
-const calcDiaPctInput = document.getElementById('f-calc-dia-pct');
 const latInput = document.getElementById('f-lat');
 const lngInput = document.getElementById('f-lng');
 const accInput = document.getElementById('f-acc');
-const notesInput = document.getElementById('f-notes');
 const updatedInput = document.getElementById('f-updated');
+
+const calcDiaPctInput = document.getElementById('f-calc-dia-pct');
+const tradNotesInput = document.getElementById('f-trad-notes');
+
+const acousticNotesInput = document.getElementById('f-acoustic-notes');
+const resistNotesInput = document.getElementById('f-resist-notes');
+
+const xrfFingerprintInput = document.getElementById('f-xrf-fingerprint');
+const xrfConcInput = document.getElementById('f-xrf-conc');
+const xrfNotesInput = document.getElementById('f-xrf-notes');
 
 const btnPaste = document.getElementById('btn-paste');
 const btnClear = document.getElementById('btn-clear');
@@ -85,12 +93,13 @@ const btnDelete = document.getElementById('btn-delete');
 const searchInput = document.getElementById('search');
 const tableBody = document.querySelector('#data-table tbody');
 
-// photos
-const btnPhotoAttach = document.getElementById('btn-photo-attach');
-const btnPhotoInsert = document.getElementById('btn-photo-insert');
-const photoFile = document.getElementById('photo-file');
-const photoGrid = document.getElementById('photo-grid');
-let photoMode = 'attach';
+// Photo targets & grids
+const photoInput = document.getElementById('photo-file');
+const tradGrid = document.getElementById('trad-photo-grid');
+const acousticGrid = document.getElementById('acoustic-photo-grid');
+const resistGrid = document.getElementById('resist-photo-grid');
+let currentPhotoTarget = null; // 'traditional' | 'acoustic' | 'resistance'
+let currentPhotoMode = 'attach'; // 'attach' | 'insert'
 
 let currentRecord = null;
 const scanPattern = /^NS-\d{4}-\d{3}$/i;
@@ -123,7 +132,12 @@ async function hydrateFromURL() {
 
 async function loadRecord(id) {
   const rec = await dbGet(id);
-  currentRecord = rec || { id, photos: [] };
+  currentRecord = rec || {
+    id,
+    photosTraditional: [],
+    photosAcoustic: [],
+    photosResistance: []
+  };
   fillFormFromRecord(currentRecord);
   highlightRow(id);
 }
@@ -131,39 +145,62 @@ async function loadRecord(id) {
 function applyFormToCurrent() {
   if (!currentRecord) currentRecord = {};
   currentRecord.id = idInput.value.trim().toUpperCase();
+  currentRecord.species = speciesInput.value || '';
   currentRecord.height = parseFloat(heightInput.value || '') || null;
   currentRecord.status = statusInput.value || '';
-  currentRecord.species = speciesInput.value || '';
-  currentRecord.calcDiaPct = calcDiaPctInput.value !== '' ? parseFloat(calcDiaPctInput.value) : null;
   currentRecord.lat = latInput.value ? parseFloat(latInput.value) : null;
   currentRecord.lng = lngInput.value ? parseFloat(lngInput.value) : null;
   currentRecord.acc = accInput.value ? parseFloat(accInput.value) : null;
-  currentRecord.notes = notesInput.value || '';
+
+  currentRecord.calcDiaPct = calcDiaPctInput.value !== '' ? parseFloat(calcDiaPctInput.value) : null;
+  currentRecord.traditionalNotes = tradNotesInput.value || '';
+
+  currentRecord.acousticNotes = acousticNotesInput.value || '';
+  currentRecord.resistanceNotes = resistNotesInput.value || '';
+
+  currentRecord.xrfFingerprint = xrfFingerprintInput.value || '';
+  currentRecord.xrfConcentration = xrfConcInput.value || '';
+  currentRecord.xrfNotes = xrfNotesInput.value || '';
+
+  if (!Array.isArray(currentRecord.photosTraditional)) currentRecord.photosTraditional = [];
+  if (!Array.isArray(currentRecord.photosAcoustic)) currentRecord.photosAcoustic = [];
+  if (!Array.isArray(currentRecord.photosResistance)) currentRecord.photosResistance = [];
+
   currentRecord.updatedAt = new Date().toISOString();
-  if (!Array.isArray(currentRecord.photos)) currentRecord.photos = [];
 }
 
 function fillFormFromRecord(rec) {
   idInput.value = rec?.id || '';
+  speciesInput.value = rec?.species || '';
   heightInput.value = rec?.height ?? '';
   statusInput.value = rec?.status || '';
-  speciesInput.value = rec?.species || '';
-  calcDiaPctInput.value = rec?.calcDiaPct ?? '';
   latInput.value = rec?.lat ?? '';
   lngInput.value = rec?.lng ?? '';
   accInput.value = rec?.acc ?? '';
-  notesInput.value = rec?.notes || '';
   updatedInput.value = rec?.updatedAt ? new Date(rec.updatedAt).toLocaleString() : '';
-  renderPhotos(rec?.photos || []);
+
+  calcDiaPctInput.value = rec?.calcDiaPct ?? '';
+  tradNotesInput.value = rec?.traditionalNotes || '';
+
+  acousticNotesInput.value = rec?.acousticNotes || '';
+  resistNotesInput.value = rec?.resistanceNotes || '';
+
+  xrfFingerprintInput.value = rec?.xrfFingerprint || '';
+  xrfConcInput.value = rec?.xrfConcentration || '';
+  xrfNotesInput.value = rec?.xrfNotes || '';
+
+  renderPhotoGrid(tradGrid, rec?.photosTraditional || [], 'traditional');
+  renderPhotoGrid(acousticGrid, rec?.photosAcoustic || [], 'acoustic');
+  renderPhotoGrid(resistGrid, rec?.photosResistance || [], 'resistance');
 }
 
 async function saveRecord(e) {
   e?.preventDefault?.();
   applyFormToCurrent();
   const rec = currentRecord;
-  if (!rec.id) { alert('Code is required.'); return; }
+  if (!rec.id) { alert('Serial is required.'); return; }
   if (!scanPattern.test(rec.id)) {
-    if (!confirm('The code does not match NS-####-###. Save anyway?')) return;
+    if (!confirm('The serial does not match NS-####-###. Save anyway?')) return;
   }
   await dbPut(rec);
   updatedInput.value = new Date(rec.updatedAt).toLocaleString();
@@ -196,13 +233,13 @@ async function pasteFromClipboard() {
     if (navigator.clipboard && navigator.clipboard.readText) {
       text = await navigator.clipboard.readText();
     } else {
-      text = prompt('Paste the code here:' ) || '';
+      text = prompt('Paste the serial here:' ) || '';
     }
     text = (text || '').trim().toUpperCase();
     if (!text) return;
     idInput.value = text;
     await loadRecord(text);
-    toast('Code pasted');
+    toast('Serial pasted');
   } catch (e) {
     alert('Failed to read clipboard. Long-press the input and Paste instead.');
   }
@@ -262,61 +299,85 @@ async function compressImageDataUrl(dataUrl) {
 }
 
 async function handlePhotoSelected(file) {
-  if (!file) return;
+  if (!file || !currentPhotoTarget) return;
   try {
     const raw = await readFileAsDataURL(file);
     const dataUrl = await compressImageDataUrl(raw);
     const photo = { dataUrl, createdAt: new Date().toISOString() };
     if (!currentRecord) applyFormToCurrent();
-    if (!Array.isArray(currentRecord.photos)) currentRecord.photos = [];
-    if (photoMode === 'insert') {
-      notesInput.value = (notesInput.value || '') + `\n![photo ${new Date().toLocaleString()}](${dataUrl})`;
-      applyFormToCurrent(); // to sync notes
+    if (!Array.isArray(currentRecord.photosTraditional)) currentRecord.photosTraditional = [];
+    if (!Array.isArray(currentRecord.photosAcoustic)) currentRecord.photosAcoustic = [];
+    if (!Array.isArray(currentRecord.photosResistance)) currentRecord.photosResistance = [];
+
+    if (currentPhotoMode === 'insert') {
+      if (currentPhotoTarget === 'traditional') {
+        tradNotesInput.value = (tradNotesInput.value || '') + `\n![photo ${new Date().toLocaleString()}](${dataUrl})`;
+      } else if (currentPhotoTarget === 'acoustic') {
+        acousticNotesInput.value = (acousticNotesInput.value || '') + `\n![photo ${new Date().toLocaleString()}](${dataUrl})`;
+      } else if (currentPhotoTarget === 'resistance') {
+        resistNotesInput.value = (resistNotesInput.value || '') + `\n![photo ${new Date().toLocaleString()}](${dataUrl})`;
+      }
+      applyFormToCurrent(); // sync notes into record
     } else {
-      currentRecord.photos.push(photo);
+      if (currentPhotoTarget === 'traditional') currentRecord.photosTraditional.push(photo);
+      if (currentPhotoTarget === 'acoustic') currentRecord.photosAcoustic.push(photo);
+      if (currentPhotoTarget === 'resistance') currentRecord.photosResistance.push(photo);
     }
+
     await dbPut(currentRecord);
-    renderPhotos(currentRecord.photos);
+    renderPhotoGrid(tradGrid, currentRecord.photosTraditional, 'traditional');
+    renderPhotoGrid(acousticGrid, currentRecord.photosAcoustic, 'acoustic');
+    renderPhotoGrid(resistGrid, currentRecord.photosResistance, 'resistance');
     await refreshTable();
-    toast(photoMode === 'insert' ? 'Photo inserted into notes' : 'Photo attached');
+    toast(currentPhotoMode === 'insert' ? 'Photo inserted into notes' : 'Photo attached');
   } catch (e) {
     alert('Failed to process photo: ' + e);
   } finally {
-    photoFile.value = '';
+    photoInput.value = '';
+    currentPhotoTarget = null;
   }
 }
 
-function renderPhotos(photos) {
-  photoGrid.innerHTML = '';
+function renderPhotoGrid(gridEl, photos, target) {
+  gridEl.innerHTML = '';
   (photos || []).forEach((p, idx) => {
     const wrap = document.createElement('div');
     wrap.className = 'ph';
     const img = document.createElement('img');
     img.src = p.dataUrl;
-    img.alt = `photo-${idx+1}`;
+    img.alt = `${target}-photo-${idx+1}`;
     const del = document.createElement('button');
     del.textContent = 'Delete';
     del.addEventListener('click', async () => {
       if (!confirm('Delete this photo?')) return;
-      currentRecord.photos.splice(idx, 1);
+      if (target === 'traditional') currentRecord.photosTraditional.splice(idx, 1);
+      if (target === 'acoustic') currentRecord.photosAcoustic.splice(idx, 1);
+      if (target === 'resistance') currentRecord.photosResistance.splice(idx, 1);
       await dbPut(currentRecord);
-      renderPhotos(currentRecord.photos);
+      renderPhotoGrid(gridEl, (target==='traditional'?currentRecord.photosTraditional: target==='acoustic'?currentRecord.photosAcoustic: currentRecord.photosResistance), target);
       await refreshTable();
     });
     wrap.appendChild(img);
     wrap.appendChild(del);
-    photoGrid.appendChild(wrap);
+    gridEl.appendChild(wrap);
   });
 }
 
 // ===== CSV =====
 function toCSV(records) {
-  const headers = ['id','height','status','species','calcDiaPct','lat','lng','acc','notes','photoCount','updatedAt'];
+  const headers = [
+    'id','species','height','status','lat','lng','acc','updatedAt',
+    'calcDiaPct','traditionalNotes','acousticNotes','resistanceNotes',
+    'xrfFingerprint','xrfConcentration','xrfNotes',
+    'photosTraditionalCount','photosAcousticCount','photosResistanceCount'
+  ];
   const lines = [headers.join(',')];
   records.forEach(r => {
     const row = headers.map(h => {
       let v;
-      if (h === 'photoCount') v = Array.isArray(r.photos) ? r.photos.length : 0;
+      if (h === 'photosTraditionalCount') v = Array.isArray(r.photosTraditional) ? r.photosTraditional.length : 0;
+      else if (h === 'photosAcousticCount') v = Array.isArray(r.photosAcoustic) ? r.photosAcoustic.length : 0;
+      else if (h === 'photosResistanceCount') v = Array.isArray(r.photosResistance) ? r.photosResistance.length : 0;
       else v = r[h];
       if (v == null) return '';
       v = String(v).replace(/"/g, '""');
@@ -344,12 +405,17 @@ function fromCSV(text) {
     cells.push(cur);
     const obj = {};
     headers.forEach((h, idx) => obj[h] = cells[idx] ?? '');
+
     obj.height = obj.height ? parseFloat(obj.height) : null;
-    obj.calcDiaPct = obj.calcDiaPct ? parseFloat(obj.calcDiaPct) : null;
     obj.lat = obj.lat ? parseFloat(obj.lat) : null;
     obj.lng = obj.lng ? parseFloat(obj.lng) : null;
     obj.acc = obj.acc ? parseFloat(obj.acc) : null;
-    obj.photos = []; // CSV import cannot contain image binaries
+    obj.calcDiaPct = obj.calcDiaPct ? parseFloat(obj.calcDiaPct) : null;
+
+    obj.photosTraditional = [];
+    obj.photosAcoustic = [];
+    obj.photosResistance = [];
+
     return obj;
   });
 }
@@ -362,6 +428,15 @@ btnDelete.addEventListener('click', deleteRecord);
 
 btnPaste.addEventListener('click', pasteFromClipboard);
 btnClear.addEventListener('click', clearCode);
+
+document.querySelectorAll('.btn-photo').forEach(btn => {
+  btn.addEventListener('click', () => {
+    currentPhotoTarget = btn.dataset.target;
+    currentPhotoMode = btn.dataset.mode;
+    photoInput.click();
+  });
+});
+photoInput.addEventListener('change', (e) => handlePhotoSelected(e.target.files[0]));
 
 searchInput.addEventListener('input', refreshTable);
 tableBody.addEventListener('click', (e) => {
@@ -392,10 +467,11 @@ document.getElementById('import-file').addEventListener('change', async (e) => {
   for (const r of rows) {
     if (!r.id) continue;
     r.updatedAt = r.updatedAt || new Date().toISOString();
-    // preserve existing photos if record exists
     const existing = await dbGet(r.id);
-    if (existing && Array.isArray(existing.photos)) {
-      r.photos = existing.photos;
+    if (existing) {
+      r.photosTraditional = existing.photosTraditional || [];
+      r.photosAcoustic = existing.photosAcoustic || [];
+      r.photosResistance = existing.photosResistance || [];
     }
     await dbPut(r);
   }
@@ -403,10 +479,6 @@ document.getElementById('import-file').addEventListener('change', async (e) => {
   toast('Import complete');
   e.target.value = '';
 });
-
-btnPhotoAttach.addEventListener('click', () => { photoMode = 'attach'; photoFile.click(); });
-btnPhotoInsert.addEventListener('click', () => { photoMode = 'insert'; photoFile.click(); });
-photoFile.addEventListener('change', (e) => handlePhotoSelected(e.target.files[0]));
 
 // ===== Init =====
 async function refreshTable() {
@@ -420,18 +492,15 @@ async function refreshTable() {
   rows.forEach(r => {
     const tr = document.createElement('tr');
     tr.dataset.id = r.id;
-    const photoCount = Array.isArray(r.photos) ? r.photos.length : 0;
     const calc = (r.calcDiaPct == null || r.calcDiaPct === '') ? '' : (r.calcDiaPct + '%');
     tr.innerHTML = `
       <td><button class="link" data-id="${r.id}">${r.id||''}</button></td>
+      <td>${r.species || ''}</td>
       <td>${r.height ?? ''}</td>
       <td>${r.status || ''}</td>
-      <td>${r.species || ''}</td>
       <td>${calc}</td>
       <td>${r.lat ?? ''}</td>
       <td>${r.lng ?? ''}</td>
-      <td>${r.acc ?? ''}</td>
-      <td>${photoCount}</td>
       <td>${r.updatedAt ? new Date(r.updatedAt).toLocaleString() : ''}</td>
     `;
     tableBody.appendChild(tr);
