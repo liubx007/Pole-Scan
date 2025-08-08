@@ -1,8 +1,33 @@
 
-// ===== IndexedDB wrapper =====
+// app.js (module) — Firestore sync + local IndexedDB storage
+
+// --- Firebase ---
+let FB = null; // will hold firebase imports + db
+
+async function initFirebase() {
+  if (!window.FIREBASE_CONFIG) {
+    console.warn('No FIREBASE_CONFIG found. Cloud sync disabled.');
+    return null;
+  }
+  const { initializeApp } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-app.js');
+  const {
+    getFirestore, doc, setDoc, getDoc, collection, getDocs, query, where,
+    enableIndexedDbPersistence
+  } = await import('https://www.gstatic.com/firebasejs/10.12.2/firebase-firestore.js');
+
+  const app = initializeApp(window.FIREBASE_CONFIG);
+  const db = getFirestore(app);
+  try { await enableIndexedDbPersistence(db); } catch (_) {}
+
+  FB = { db, doc, setDoc, getDoc, collection, getDocs, query, where };
+  console.log('Firebase initialized');
+  return FB;
+}
+
+// --- Local IndexedDB ---
 const DB_NAME = 'poleDB';
 const DB_STORE = 'poles';
-const DB_VER = 8; // schema for v4 sections
+const DB_VER = 9;
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -63,7 +88,7 @@ async function dbAll() {
   });
 }
 
-// ===== UI refs =====
+// --- UI refs ---
 const idInput = document.getElementById('f-id');
 const speciesInput = document.getElementById('f-species');
 const heightInput = document.getElementById('f-height');
@@ -90,11 +115,12 @@ const btnLocate = document.getElementById('btn-locate');
 const btnSave = document.getElementById('btn-save');
 const btnNew = document.getElementById('btn-new');
 const btnDelete = document.getElementById('btn-delete');
+const btnSync = document.getElementById('btn-sync');
 
 const searchInput = document.getElementById('search');
 const tableBody = document.querySelector('#data-table tbody');
 
-// Photos per section
+// Photos per section (local only in v5)
 const btnTradAttach = document.getElementById('btn-trad-attach');
 const btnTradInsert = document.getElementById('btn-trad-insert');
 const fileTradPhoto = document.getElementById('file-trad-photo');
@@ -113,7 +139,7 @@ const resistPhotoGrid = document.getElementById('resist-photo-grid');
 let currentRecord = null;
 const scanPattern = /^NS-\d{4}-\d{3}$/i;
 
-// ===== Helpers =====
+// --- Helpers ---
 function toast(msg) {
   const t = document.createElement('div');
   t.className = 'toast';
@@ -139,11 +165,12 @@ async function hydrateFromURL() {
   await loadRecord(id);
 }
 
-// ===== CRUD =====
+// --- CRUD ---
 async function loadRecord(id) {
   const rec = await dbGet(id);
   currentRecord = rec || {
     id,
+    updatedAtMs: 0,
     tradPhotos: [],
     acousticPhotos: [],
     resistPhotos: []
@@ -173,6 +200,8 @@ function applyFormToCurrent() {
   currentRecord.xrfNotes = xrfNotesInput.value || '';
 
   currentRecord.updatedAt = new Date().toISOString();
+  currentRecord.updatedAtMs = Date.now();
+
   if (!Array.isArray(currentRecord.tradPhotos)) currentRecord.tradPhotos = [];
   if (!Array.isArray(currentRecord.acousticPhotos)) currentRecord.acousticPhotos = [];
   if (!Array.isArray(currentRecord.resistPhotos)) currentRecord.resistPhotos = [];
@@ -217,6 +246,8 @@ async function saveRecord(e) {
   await refreshTable();
   highlightRow(rec.id);
   toast('Saved');
+  // push to cloud (fire-and-forget)
+  cloudPush(rec).catch(err => console.warn('Cloud push failed:', err));
 }
 
 async function deleteRecord() {
@@ -236,7 +267,7 @@ function highlightRow(id) {
   });
 }
 
-// ===== Clipboard & Clear =====
+// --- Clipboard & Clear ---
 async function pasteFromClipboard() {
   try {
     let text = '';
@@ -261,7 +292,7 @@ function clearCode() {
   fillFormFromRecord({});
 }
 
-// ===== Location =====
+// --- Location ---
 function getLocation() {
   if (!('geolocation' in navigator)) {
     alert('Geolocation is not supported on this device.');
@@ -282,7 +313,7 @@ function getLocation() {
   );
 }
 
-// ===== Photos =====
+// --- Photos (local only) ---
 function readFileAsDataURL(file) {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -328,7 +359,7 @@ async function handlePhotoSelected(file, sectionKey, notesInputEl) {
     if (sectionKey === 'acousticPhotos') renderPhotos(acousticPhotoGrid, currentRecord.acousticPhotos, 'acousticPhotos');
     if (sectionKey === 'resistPhotos') renderPhotos(resistPhotoGrid, currentRecord.resistPhotos, 'resistPhotos');
     await refreshTable();
-    toast('Photo added');
+    toast('Photo added (local only)');
   } catch (e) {
     alert('Failed to process photo: ' + e);
   }
@@ -357,7 +388,7 @@ function renderPhotos(gridEl, photos, sectionKey) {
   });
 }
 
-// ===== CSV =====
+// --- CSV ---
 function toCSV(records) {
   const headers = [
     'id','species','treatment','height','lat','lng','acc',
@@ -365,7 +396,7 @@ function toCSV(records) {
     'ndtAcousticNotes','ndtResistanceNotes',
     'xrfPole','xrfConcentrationPct','xrfNotes',
     'tradPhotoCount','acousticPhotoCount','resistPhotoCount',
-    'updatedAt'
+    'updatedAt','updatedAtMs'
   ];
   const lines = [headers.join(',')];
   records.forEach(r => {
@@ -410,6 +441,7 @@ function fromCSV(text) {
     obj.acc = obj.acc ? parseFloat(obj.acc) : null;
     obj.calcDiaPct = obj.calcDiaPct ? parseFloat(obj.calcDiaPct) : null;
     obj.xrfConcentrationPct = obj.xrfConcentrationPct ? parseFloat(obj.xrfConcentrationPct) : null;
+    obj.updatedAtMs = obj.updatedAtMs ? parseFloat(obj.updatedAtMs) : 0;
     // photos not imported from CSV
     obj.tradPhotos = [];
     obj.acousticPhotos = [];
@@ -418,11 +450,91 @@ function fromCSV(text) {
   });
 }
 
-// ===== Events =====
+// --- Cloud sync (Firestore, data only) ---
+function cloudSerialize(r) {
+  // strip local photos (huge) and keep counts
+  return {
+    id: r.id || '',
+    species: r.species || '',
+    treatment: r.treatment || '',
+    height: r.height ?? null,
+    lat: r.lat ?? null,
+    lng: r.lng ?? null,
+    acc: r.acc ?? null,
+    calcDiaPct: r.calcDiaPct ?? null,
+    tradNotes: r.tradNotes || '',
+    ndtAcousticNotes: r.ndtAcousticNotes || '',
+    ndtResistanceNotes: r.ndtResistanceNotes || '',
+    xrfPole: r.xrfPole || '',
+    xrfConcentrationPct: r.xrfConcentrationPct ?? null,
+    xrfNotes: r.xrfNotes || '',
+    updatedAt: r.updatedAt || null,
+    updatedAtMs: r.updatedAtMs || 0,
+    tradPhotoCount: Array.isArray(r.tradPhotos) ? r.tradPhotos.length : 0,
+    acousticPhotoCount: Array.isArray(r.acousticPhotos) ? r.acousticPhotos.length : 0,
+    resistPhotoCount: Array.isArray(r.resistPhotos) ? r.resistPhotos.length : 0
+  };
+}
+
+async function cloudPush(record) {
+  if (!FB) return;
+  const payload = cloudSerialize(record);
+  const ref = FB.doc(FB.collection(FB.db, 'poles'), record.id);
+  await FB.setDoc(ref, payload, { merge: true });
+}
+
+async function cloudPullSince(lastMs) {
+  if (!FB) return [];
+  const col = FB.collection(FB.db, 'poles');
+  let docsSnap;
+  if (lastMs && lastMs > 0) {
+    const q = FB.query(col, FB.where('updatedAtMs', '>', lastMs));
+    docsSnap = await FB.getDocs(q);
+  } else {
+    docsSnap = await FB.getDocs(col);
+  }
+  const out = [];
+  docsSnap.forEach(d => out.push(d.data()));
+  return out;
+}
+
+async function cloudSyncNow() {
+  if (!FB) { toast('Cloud not configured'); return; }
+  const lastSyncMs = parseFloat(localStorage.getItem('lastSyncMs') || '0');
+  // 1) Pull newer from cloud
+  const remote = await cloudPullSince(lastSyncMs);
+  let pulled = 0;
+  for (const r of remote) {
+    const local = await dbGet(r.id);
+    if (!local || (r.updatedAtMs || 0) > (local.updatedAtMs || 0)) {
+      // merge: keep local photos, replace fields
+      const keepPhotos = {
+        tradPhotos: local?.tradPhotos || [],
+        acousticPhotos: local?.acousticPhotos || [],
+        resistPhotos: local?.resistPhotos || []
+      };
+      await dbPut({ ...local, ...r, ...keepPhotos });
+      pulled++;
+    }
+  }
+  // 2) Push all local newer than lastSyncMs (best-effort)
+  const allLocal = await dbAll();
+  let pushed = 0;
+  for (const r of allLocal) {
+    if ((r.updatedAtMs || 0) > lastSyncMs) {
+      try { await cloudPush(r); pushed++; } catch (e) { console.warn(e); }
+    }
+  }
+  localStorage.setItem('lastSyncMs', String(Date.now()));
+  toast(`Synced: pulled ${pulled}, pushed ${pushed}`);
+}
+
+// --- Events ---
 document.getElementById('btn-save').addEventListener('click', saveRecord);
 document.getElementById('btn-locate').addEventListener('click', getLocation);
 document.getElementById('btn-new').addEventListener('click', () => { currentRecord = null; fillFormFromRecord({}); });
 document.getElementById('btn-delete').addEventListener('click', deleteRecord);
+document.getElementById('btn-sync').addEventListener('click', () => cloudSyncNow().catch(console.error));
 
 document.getElementById('btn-export').addEventListener('click', async () => {
   const csv = toCSV(await dbAll());
@@ -443,12 +555,16 @@ document.getElementById('import-file').addEventListener('change', async (e) => {
   for (const r of rows) {
     if (!r.id) continue;
     r.updatedAt = r.updatedAt || new Date().toISOString();
+    r.updatedAtMs = r.updatedAtMs || Date.now();
     const existing = await dbGet(r.id);
     if (existing) {
-      // keep existing photos if any
       r.tradPhotos = existing.tradPhotos || [];
       r.acousticPhotos = existing.acousticPhotos || [];
       r.resistPhotos = existing.resistPhotos || [];
+    } else {
+      r.tradPhotos = [];
+      r.acousticPhotos = [];
+      r.resistPhotos = [];
     }
     await dbPut(r);
   }
@@ -483,7 +599,7 @@ btnResistAttach.addEventListener('click', () => { resistNotesInput.dataset.inser
 btnResistInsert.addEventListener('click', () => { resistNotesInput.dataset.insert = 'true'; fileResistPhoto.click(); });
 fileResistPhoto.addEventListener('change', (e) => handlePhotoSelected(e.target.files[0], 'resistPhotos', resistNotesInput));
 
-// ===== Table =====
+// --- Table ---
 async function refreshTable() {
   const all = await dbAll();
   const q = searchInput.value.trim().toUpperCase();
@@ -510,9 +626,12 @@ async function refreshTable() {
   });
 }
 
-// ===== Init =====
+// --- Init ---
 (async function init() {
   await openDB();
+  await initFirebase();
   await hydrateFromURL();
   await refreshTable();
+  // Try an initial pull to update local (fire-and-forget)
+  cloudSyncNow().catch(()=>{});
 })();
