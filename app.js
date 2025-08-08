@@ -2,7 +2,7 @@
 // ===== IndexedDB wrapper =====
 const DB_NAME = 'poleDB';
 const DB_STORE = 'poles';
-const DB_VER = 5;
+const DB_VER = 7; // bump for calcDiaPct
 
 function openDB() {
   return new Promise((resolve, reject) => {
@@ -67,6 +67,8 @@ async function dbAll() {
 const idInput = document.getElementById('f-id');
 const heightInput = document.getElementById('f-height');
 const statusInput = document.getElementById('f-status');
+const speciesInput = document.getElementById('f-species');
+const calcDiaPctInput = document.getElementById('f-calc-dia-pct');
 const latInput = document.getElementById('f-lat');
 const lngInput = document.getElementById('f-lng');
 const accInput = document.getElementById('f-acc');
@@ -131,6 +133,8 @@ function applyFormToCurrent() {
   currentRecord.id = idInput.value.trim().toUpperCase();
   currentRecord.height = parseFloat(heightInput.value || '') || null;
   currentRecord.status = statusInput.value || '';
+  currentRecord.species = speciesInput.value || '';
+  currentRecord.calcDiaPct = calcDiaPctInput.value !== '' ? parseFloat(calcDiaPctInput.value) : null;
   currentRecord.lat = latInput.value ? parseFloat(latInput.value) : null;
   currentRecord.lng = lngInput.value ? parseFloat(lngInput.value) : null;
   currentRecord.acc = accInput.value ? parseFloat(accInput.value) : null;
@@ -143,6 +147,8 @@ function fillFormFromRecord(rec) {
   idInput.value = rec?.id || '';
   heightInput.value = rec?.height ?? '';
   statusInput.value = rec?.status || '';
+  speciesInput.value = rec?.species || '';
+  calcDiaPctInput.value = rec?.calcDiaPct ?? '';
   latInput.value = rec?.lat ?? '';
   lngInput.value = rec?.lng ?? '';
   accInput.value = rec?.acc ?? '';
@@ -305,11 +311,13 @@ function renderPhotos(photos) {
 
 // ===== CSV =====
 function toCSV(records) {
-  const headers = ['id','height','status','lat','lng','acc','notes','photoCount','updatedAt'];
+  const headers = ['id','height','status','species','calcDiaPct','lat','lng','acc','notes','photoCount','updatedAt'];
   const lines = [headers.join(',')];
   records.forEach(r => {
     const row = headers.map(h => {
-      let v = (h === 'photoCount') ? (Array.isArray(r.photos) ? r.photos.length : 0) : r[h];
+      let v;
+      if (h === 'photoCount') v = Array.isArray(r.photos) ? r.photos.length : 0;
+      else v = r[h];
       if (v == null) return '';
       v = String(v).replace(/"/g, '""');
       if (v.includes(',') || v.includes('\n') || v.includes('"')) v = `"${v}"`;
@@ -337,6 +345,7 @@ function fromCSV(text) {
     const obj = {};
     headers.forEach((h, idx) => obj[h] = cells[idx] ?? '');
     obj.height = obj.height ? parseFloat(obj.height) : null;
+    obj.calcDiaPct = obj.calcDiaPct ? parseFloat(obj.calcDiaPct) : null;
     obj.lat = obj.lat ? parseFloat(obj.lat) : null;
     obj.lng = obj.lng ? parseFloat(obj.lng) : null;
     obj.acc = obj.acc ? parseFloat(obj.acc) : null;
@@ -412,10 +421,13 @@ async function refreshTable() {
     const tr = document.createElement('tr');
     tr.dataset.id = r.id;
     const photoCount = Array.isArray(r.photos) ? r.photos.length : 0;
+    const calc = (r.calcDiaPct == null || r.calcDiaPct === '') ? '' : (r.calcDiaPct + '%');
     tr.innerHTML = `
       <td><button class="link" data-id="${r.id}">${r.id||''}</button></td>
       <td>${r.height ?? ''}</td>
       <td>${r.status || ''}</td>
+      <td>${r.species || ''}</td>
+      <td>${calc}</td>
       <td>${r.lat ?? ''}</td>
       <td>${r.lng ?? ''}</td>
       <td>${r.acc ?? ''}</td>

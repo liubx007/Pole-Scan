@@ -11,7 +11,7 @@
 <body>
   <header>
     <h1>Pole Inspector</h1>
-    <p>Use iOS Code Scanner (Control Center) to open this page with the pole code, or paste a code directly. Edit height, status, GPS and photos.</p>
+    <p>Use iOS Code Scanner (Control Center) to open this page with the pole code, or paste a code directly. Edit height, status, species, GPS and photos.</p>
   </header>
 
   <main>
@@ -49,6 +49,21 @@
                 <option value="Repair">Repair</option>
                 <option value="Replace">Replace</option>
               </select>
+            </label>
+
+            <label>Species
+              <select id="f-species">
+                <option value="">— Select —</option>
+                <option value="SYP">SYP</option>
+                <option value="DF">DF</option>
+                <option value="RP">RP</option>
+                <option value="WRC">WRC</option>
+                <option value="Unknown">Unknown</option>
+              </select>
+            </label>
+
+            <label>Calc Equivalent Dia (%)
+              <input id="f-calc-dia-pct" type="number" step="0.1" min="0" max="100" placeholder="Optional, 0–100" />
             </label>
 
             <label>Latitude
@@ -107,7 +122,7 @@
           <table id="data-table">
             <thead>
               <tr>
-                <th>Code</th><th>Height(m)</th><th>Status</th><th>Lat</th><th>Lng</th><th>Acc(m)</th><th>Photos</th><th>Updated</th>
+                <th>Code</th><th>Height(m)</th><th>Status</th><th>Species</th><th>Calc Dia (%)</th><th>Lat</th><th>Lng</th><th>Acc(m)</th><th>Photos</th><th>Updated</th>
               </tr>
             </thead>
             <tbody></tbody>
