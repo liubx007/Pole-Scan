@@ -1,0 +1,600 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>Pole Inspector — Native Scanner (No external libs)</title>
+  <meta name="theme-color" content="#0b5ed7" />
+  <style>
+    * { box-sizing: border-box; }
+    :root { --brand:#0b5ed7; --muted:#6b7280; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif; background:#f6f8fa; color:#111827; }
+    header, footer { padding: 12px 16px; background:var(--brand); color:#fff; }
+    header h1 { margin:0 0 6px; font-size:20px; }
+    header p { margin:0; opacity:.9; }
+    footer { background:var(--brand); text-align:center; font-size:12px; }
+    main { padding: 16px; max-width: 1024px; margin: 0 auto; }
+    .card { background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:14px; margin-bottom:16px; box-shadow: 0 1px 2px rgba(0,0,0,.04); }
+    h2 { margin: 6px 0 12px; font-size:18px; }
+    .controls { display:flex; flex-wrap:wrap; gap:8px; margin:8px 0; align-items:center; }
+    .controls button, .file-label {
+      background:var(--brand); color:#fff; border:none; border-radius:8px; padding:10px 14px; cursor:pointer; font-size:15px;
+    }
+    .controls button:disabled { opacity: .6; cursor: not-allowed; }
+    .controls .danger { background:#dc2626; }
+    .controls input[type="file"] { display:none; }
+    .file-label { display:inline-flex; align-items:center; gap:6px; }
+    .hint { margin-top:6px; color:#374151; }
+    .small { font-size:12px; }
+    .hidden { display:none; }
+    #scanner { width: 100%; max-width: 520px; margin: 0 auto; min-height: 220px; position: relative; }
+    #video { width: 100%; border-radius: 10px; background:#000; }
+    #overlay { position:absolute; left:0; top:0; right:0; bottom:0; border:2px dashed rgba(255,255,255,.6); border-radius:10px; pointer-events:none; }
+    #pole-form label { display:flex; flex-direction:column; gap:6px; font-size:14px; }
+    #pole-form input, #pole-form select, #pole-form textarea { width:100%; padding:10px 12px; border:1px solid #d1d5db; border-radius:8px; font-size:15px; background:#fff; }
+    .grid { display:grid; gap:10px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    .table-wrap { overflow:auto; }
+    table { width:100%; border-collapse: collapse; font-size:14px; }
+    th, td { padding:8px 10px; border-bottom:1px solid #e5e7eb; white-space: nowrap; }
+    tbody tr.active { background:#eef2ff; }
+    button.link { background:none; color:var(--brand); border:none; cursor:pointer; padding:0; text-decoration:underline; }
+    .toast { position: fixed; left: 50%; bottom: 20px; transform: translateX(-50%); background: rgba(0,0,0,.85); color: #fff; padding: 8px 12px; border-radius: 999px; opacity: 0; transition: .2s; }
+    .toast.show { opacity: 1; }
+    .photos h3 { margin: 8px 0 0 0; font-size: 16px; }
+    .photo-grid { display:flex; gap:8px; flex-wrap:wrap; margin: 8px 0; }
+    .photo-grid img { width: 100px; height: 100px; object-fit: cover; border-radius: 8px; border:1px solid #e5e7eb; }
+    .photo-grid .ph { display:flex; flex-direction:column; gap:6px; align-items:center; }
+    .photo-grid .ph button { background:#ef4444; font-size:12px; padding:4px 6px; border-radius:6px; }
+    details.diag { margin-top:10px; }
+    #diag { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; font-size:12px; background:#f3f4f6; border:1px solid #e5e7eb; padding:8px; border-radius:8px; }
+    .banner { background:#fff7ed; border:1px solid #fed7aa; color:#7c2d12; padding:10px 12px; border-radius:8px; margin:8px 0; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Pole Inspector</h1>
+    <p>Native scanner using <b>BarcodeDetector</b>. No external libraries. If your Safari is too old to support it, you'll see a clear message below.</p>
+  </header>
+
+  <main>
+    <section id="scan-section">
+      <div class="card">
+        <h2>Scan</h2>
+        <div class="banner" id="ios-banner" style="display:none;">
+          iPhone tip: Open this page in <b>Safari</b> (top-level), make sure it's <b>HTTPS</b>, and allow <b>Camera</b> access.
+        </div>
+        <div id="scanner">
+          <video id="video" playsinline muted></video>
+          <div id="overlay"></div>
+        </div>
+        <div class="controls">
+          <button id="btn-start-scan">Start Scan</button>
+          <button id="btn-stop-scan" disabled>Stop Scan</button>
+          <select id="camera-select" title="Choose camera"></select>
+        </div>
+        <div class="controls">
+          <button id="btn-scan-file">Scan from photo</button>
+          <input type="file" id="scan-file" accept="image/*" hidden />
+        </div>
+        <div id="scan-result" class="hint">Result: <span id="scan-text">—</span></div>
+        <div id="scan-help" class="hint small hidden"></div>
+
+        <details class="diag">
+          <summary>Diagnostics</summary>
+          <div id="diag"></div>
+          <div class="controls">
+            <button id="btn-run-diag">Run diagnostics</button>
+            <button id="btn-reset-cache" class="danger">Reset app cache</button>
+          </div>
+        </details>
+      </div>
+    </section>
+
+    <section id="form-section">
+      <div class="card">
+        <h2>Record</h2>
+        <form id="pole-form">
+          <div class="grid">
+            <label>Code
+              <input id="f-id" placeholder="e.g., NS-7003-001" required />
+            </label>
+
+            <label>Height (m)
+              <input id="f-height" type="number" step="0.1" min="0" placeholder="e.g., 12.5" />
+            </label>
+
+            <label>Status
+              <select id="f-status">
+                <option value="">— Select —</option>
+                <option value="OK">OK</option>
+                <option value="Watch">Watch</option>
+                <option value="Repair">Repair</option>
+                <option value="Replace">Replace</option>
+              </select>
+            </label>
+
+            <label>Latitude
+              <input id="f-lat" inputmode="decimal" placeholder="Auto or manual" />
+            </label>
+
+            <label>Longitude
+              <input id="f-lng" inputmode="decimal" placeholder="Auto or manual" />
+            </label>
+
+            <label>Accuracy (m)
+              <input id="f-acc" inputmode="decimal" placeholder="Auto" />
+            </label>
+
+            <label>Notes
+              <textarea id="f-notes" rows="3" placeholder="Optional"></textarea>
+            </label>
+
+            <label>Updated At
+              <input id="f-updated" disabled />
+            </label>
+          </div>
+
+          <div class="controls">
+            <button type="button" id="btn-locate">Get current location</button>
+            <button type="submit" id="btn-save">Save</button>
+            <button type="button" id="btn-new">New</button>
+            <button type="button" id="btn-delete" class="danger">Delete</button>
+          </div>
+
+          <div class="photos">
+            <h3>Photos</h3>
+            <div class="controls">
+              <button type="button" id="btn-photo-attach">Attach photo</button>
+              <button type="button" id="btn-photo-insert">Insert photo into notes</button>
+              <input type="file" id="photo-file" accept="image/*" capture="environment" hidden />
+            </div>
+            <div id="photo-grid" class="photo-grid"></div>
+          </div>
+        </form>
+      </div>
+    </section>
+
+    <section id="list-section">
+      <div class="card">
+        <h2>Data</h2>
+        <div class="controls">
+          <input id="search" placeholder="Filter by code (fuzzy match)" />
+          <button id="btn-export">Export CSV</button>
+          <label class="file-label">
+            Import CSV
+            <input type="file" id="import-file" accept=".csv,text/csv" hidden />
+          </label>
+        </div>
+        <div class="table-wrap">
+          <table id="data-table">
+            <thead>
+              <tr>
+                <th>Code</th><th>Height(m)</th><th>Status</th><th>Lat</th><th>Lng</th><th>Acc(m)</th><th>Photos</th><th>Updated</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    <small>No external libraries. Data is saved to this device (IndexedDB).</small>
+  </footer>
+
+  <script>
+  // ===== Helpers =====
+  const log = (...a) => { console.log(...a); appendDiag(a.map(x => typeof x==='object'? JSON.stringify(x): String(x)).join(' ')); };
+  function appendDiag(s){ const el = document.getElementById('diag'); el.textContent += s + '\n'; }
+  function clearDiag(){ document.getElementById('diag').textContent=''; }
+  function toast(msg) {
+    const t = document.createElement('div'); t.className = 'toast'; t.textContent = msg; document.body.appendChild(t);
+    setTimeout(() => t.classList.add('show'), 10);
+    setTimeout(() => t.classList.remove('show'), 2000);
+    setTimeout(() => t.remove(), 2600);
+  }
+  function showScanHelp(message) { const el = document.getElementById('scan-help'); el.textContent = message; el.classList.remove('hidden'); }
+  (function () { const ua = navigator.userAgent||''; const isIOS = /iPhone|iPad|iPod/i.test(ua); if (isIOS) document.getElementById('ios-banner').style.display = 'block'; })();
+
+  // ===== IndexedDB =====
+  const DB_NAME = 'poleDB'; const DB_STORE = 'poles'; const DB_VER = 4;
+  function openDB() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VER);
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains(DB_STORE)) {
+          const store = db.createObjectStore(DB_STORE, { keyPath: 'id' });
+          store.createIndex('id', 'id', { unique: true });
+        }
+      };
+      req.onsuccess = () => resolve(req.result);
+      req.onerror = () => reject(req.error);
+    });
+  }
+  async function dbGet(id) { const db = await openDB(); return new Promise((res, rej)=>{ const tx=db.transaction(DB_STORE,'readonly'); const st=tx.objectStore(DB_STORE); const rq=st.get(id); rq.onsuccess=()=>res(rq.result||null); rq.onerror=()=>rej(rq.error); }); }
+  async function dbPut(r) { const db = await openDB(); return new Promise((res, rej)=>{ const tx=db.transaction(DB_STORE,'readwrite'); const st=tx.objectStore(DB_STORE); const rq=st.put(r); rq.onsuccess=()=>res(); rq.onerror=()=>rej(rq.error); }); }
+  async function dbDelete(id){ const db = await openDB(); return new Promise((res, rej)=>{ const tx=db.transaction(DB_STORE,'readwrite'); const st=tx.objectStore(DB_STORE); const rq=st.delete(id); rq.onsuccess=()=>res(); rq.onerror=()=>rej(rq.error); }); }
+  async function dbAll(){ const db = await openDB(); return new Promise((res, rej)=>{ const tx=db.transaction(DB_STORE,'readonly'); const st=tx.objectStore(DB_STORE); const rq=st.getAll(); rq.onsuccess=()=>res(rq.result||[]); rq.onerror=()=>rej(rq.error); }); }
+
+  // ===== UI refs =====
+  const idInput = document.getElementById('f-id'); const heightInput = document.getElementById('f-height'); const statusInput = document.getElementById('f-status');
+  const latInput = document.getElementById('f-lat'); const lngInput = document.getElementById('f-lng'); const accInput = document.getElementById('f-acc');
+  const notesInput = document.getElementById('f-notes'); const updatedInput = document.getElementById('f-updated');
+  const btnLocate = document.getElementById('btn-locate'); const btnNew = document.getElementById('btn-new'); const btnDelete = document.getElementById('btn-delete');
+  const searchInput = document.getElementById('search'); const tableBody = document.querySelector('#data-table tbody');
+  const btnStartScan = document.getElementById('btn-start-scan'); const btnStopScan = document.getElementById('btn-stop-scan');
+  const cameraSelect = document.getElementById('camera-select'); const scanText = document.getElementById('scan-text');
+  const btnScanFile = document.getElementById('btn-scan-file'); const scanFile = document.getElementById('scan-file');
+  const btnRunDiag = document.getElementById('btn-run-diag'); const btnResetCache = document.getElementById('btn-reset-cache');
+  const btnPhotoAttach = document.getElementById('btn-photo-attach'); const btnPhotoInsert = document.getElementById('btn-photo-insert');
+  const photoFile = document.getElementById('photo-file'); const photoGrid = document.getElementById('photo-grid'); let photoMode = 'attach';
+
+  // ===== State =====
+  const scanPattern = /^NS-\d{4}-\d{3}$/i;
+  let currentRecord = null; let isScanning = false;
+  let stream = null; let detector = null; let raf = 0;
+
+  function supportsBarcodeDetector() {
+    return 'BarcodeDetector' in window;
+  }
+
+  async function ensureDetector() {
+    if (detector) return detector;
+    if (!supportsBarcodeDetector()) throw new Error('BarcodeDetector API not supported on this browser.');
+    const formats = [
+      'qr_code','code_128','code_39','code_93','ean_13','ean_8','upc_a','upc_e','itf','codabar','data_matrix','pdf417','aztec'
+    ].filter(f => BarcodeDetector.getSupportedFormats ? true : ['qr_code','code_128','code_39','ean_13','ean_8','upc_a','upc_e'].includes(f));
+    detector = new BarcodeDetector({ formats });
+    return detector;
+  }
+
+  async function listCameras() {
+    try {
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      const vids = devices.filter(d => d.kind === 'videoinput');
+      cameraSelect.innerHTML = '';
+      vids.forEach((d, i) => {
+        const opt = document.createElement('option');
+        opt.value = d.deviceId; opt.textContent = d.label || `Camera ${i+1}`;
+        cameraSelect.appendChild(opt);
+      });
+      return vids;
+    } catch (e) { log('enumerateDevices error:', e); return []; }
+  }
+
+  async function startScan() {
+    log('StartScan clicked');
+    if (isScanning) return;
+    btnStartScan.disabled = true; btnStartScan.textContent = 'Starting...';
+    try {
+      if (!isSecureContext) throw new Error('Not HTTPS secure context');
+      await ensureDetector();
+      const cams = await listCameras();
+      const deviceId = cameraSelect.value || (cams[0] && cams[0].deviceId);
+      const constraints = deviceId ? { video: { deviceId: { exact: deviceId } } } : { video: { facingMode: 'environment' } };
+      stream = await navigator.mediaDevices.getUserMedia(constraints);
+      const video = document.getElementById('video');
+      video.srcObject = stream;
+      await video.play();
+      isScanning = true;
+      btnStopScan.disabled = false; btnStartScan.textContent = 'Start Scan';
+      scanLoop();
+    } catch (e) {
+      log('Start scan error:', e);
+      showScanHelp('Failed to start camera. ' + e.message + '. If on iPhone, open in Safari over HTTPS and allow Camera.');
+      alert('Failed to start camera: ' + e.message);
+      btnStartScan.disabled = false; btnStartScan.textContent = 'Start Scan';
+    }
+  }
+
+  async function scanLoop() {
+    if (!isScanning) return;
+    const video = document.getElementById('video');
+    try {
+      const det = await ensureDetector();
+      if (video.readyState >= 2) {
+        const results = await det.detect(video);
+        if (results && results.length) {
+          const text = results[0].rawValue || results[0].rawValue;
+          onScanSuccess(text);
+          return; // stop after first success
+        }
+      }
+    } catch (e) {
+      // ignore per-frame errors
+    }
+    raf = requestAnimationFrame(scanLoop);
+  }
+
+  async function stopScan() {
+    if (!isScanning) return;
+    isScanning = false;
+    cancelAnimationFrame(raf);
+    const video = document.getElementById('video');
+    video.pause(); video.srcObject = null;
+    if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+    btnStartScan.disabled = false; btnStopScan.disabled = true;
+  }
+
+  function onScanSuccess(decodedText) {
+    scanText.textContent = decodedText;
+    const id = (decodedText || '').trim().toUpperCase();
+    if (!scanPattern.test(id)) { idInput.value = id; return; }
+    idInput.value = id;
+    loadRecord(id);
+    stopScan();
+    if (navigator.vibrate) navigator.vibrate(100);
+  }
+
+  // Scan from photo using BarcodeDetector
+  document.getElementById('btn-scan-file').addEventListener('click', () => scanFile.click());
+  scanFile.addEventListener('change', async (e) => {
+    const f = e.target.files[0]; if (!f) return;
+    try {
+      await ensureDetector();
+      const img = new Image();
+      img.src = URL.createObjectURL(f);
+      await img.decode();
+      const bitmap = await createImageBitmap(img);
+      const results = await detector.detect(bitmap);
+      if (results && results.length) {
+        onScanSuccess(results[0].rawValue || results[0].rawValue);
+      } else {
+        alert('No barcode/QR found in the image.');
+      }
+    } catch (e) {
+      alert('Failed to scan image: ' + e.message);
+    } finally {
+      URL.revokeObjectURL(img.src);
+      scanFile.value='';
+    }
+  });
+
+  // ===== Location =====
+  function getLocation() {
+    if (!('geolocation' in navigator)) { alert('Geolocation not supported.'); return; }
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        latInput.value = latitude.toFixed(7);
+        lngInput.value = longitude.toFixed(7);
+        accInput.value = accuracy != null ? accuracy.toFixed(1) : '';
+        toast('Location filled');
+      },
+      (err) => { alert('Failed to get location: ' + err.message); },
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  }
+
+  // ===== Records =====
+  function applyFormToCurrent() {
+    if (!currentRecord) currentRecord = {};
+    currentRecord.id = idInput.value.trim().toUpperCase();
+    currentRecord.height = parseFloat(heightInput.value || '') || null;
+    currentRecord.status = statusInput.value || '';
+    currentRecord.lat = latInput.value ? parseFloat(latInput.value) : null;
+    currentRecord.lng = lngInput.value ? parseFloat(lngInput.value) : null;
+    currentRecord.acc = accInput.value ? parseFloat(accInput.value) : null;
+    currentRecord.notes = notesInput.value || '';
+    currentRecord.updatedAt = new Date().toISOString();
+    if (!Array.isArray(currentRecord.photos)) currentRecord.photos = [];
+  }
+  function fillFormFromRecord(rec) {
+    idInput.value = rec?.id || '';
+    heightInput.value = rec?.height ?? '';
+    statusInput.value = rec?.status || '';
+    latInput.value = rec?.lat ?? '';
+    lngInput.value = rec?.lng ?? '';
+    accInput.value = rec?.acc ?? '';
+    notesInput.value = rec?.notes || '';
+    updatedInput.value = rec?.updatedAt ? new Date(rec.updatedAt).toLocaleString() : '';
+    renderPhotos(rec?.photos || []);
+  }
+  function renderPhotos(photos) {
+    photoGrid.innerHTML = '';
+    (photos || []).forEach((p, idx) => {
+      const wrap = document.createElement('div'); wrap.className = 'ph';
+      const img = document.createElement('img'); img.src = p.dataUrl; img.alt = `photo-${idx+1}`;
+      const del = document.createElement('button'); del.textContent = 'Delete';
+      del.addEventListener('click', async () => {
+        if (!confirm('Delete this photo?')) return;
+        currentRecord.photos.splice(idx, 1);
+        await dbPut(currentRecord);
+        renderPhotos(currentRecord.photos);
+        await refreshTable();
+      });
+      wrap.appendChild(img); wrap.appendChild(del); photoGrid.appendChild(wrap);
+    });
+  }
+  async function loadRecord(id) { const rec = await dbGet(id); currentRecord = rec || { id, photos: [] }; fillFormFromRecord(currentRecord); highlightRow(id); }
+  async function saveRecord(e){ e?.preventDefault?.(); applyFormToCurrent(); const rec = currentRecord; if(!rec.id){ alert('Code is required.'); return; } if(!scanPattern.test(rec.id)){ if(!confirm('Code does not match NS-####-###. Save anyway?')) return; } await dbPut(rec); updatedInput.value = new Date(rec.updatedAt).toLocaleString(); await refreshTable(); highlightRow(rec.id); toast('Saved'); }
+  async function deleteRecord(){ const id = idInput.value.trim().toUpperCase(); if(!id) return; if(!confirm('Delete this record?')) return; await dbDelete(id); currentRecord = null; fillFormFromRecord({}); await refreshTable(); toast('Deleted'); }
+  function highlightRow(id){ document.querySelectorAll('#data-table tbody tr').forEach(tr => tr.classList.toggle('active', tr.dataset.id === id)); }
+
+  // ===== CSV =====
+  function toCSV(records) {
+    const headers = ['id','height','status','lat','lng','acc','notes','photoCount','updatedAt'];
+    const lines = [headers.join(',')];
+    records.forEach(r => {
+      const row = headers.map(h => {
+        let v = (h === 'photoCount') ? (Array.isArray(r.photos) ? r.photos.length : 0) : r[h];
+        if (v == null) return '';
+        v = String(v).replace(/"/g, '""');
+        if (v.includes(',') || v.includes('\n') || v.includes('"')) v = `"${v}"`;
+        return v;
+      }).join(',');
+      lines.push(row);
+    });
+    return lines.join('\n');
+  }
+  function fromCSV(text) {
+    const lines = text.split(/\r?\n/).filter(Boolean);
+    const headers = lines.shift().split(',');
+    return lines.map(line => {
+      const cells = []; let cur = '', inQuotes = false;
+      for (let i=0;i<line.length;i++) {
+        const ch = line[i];
+        if (ch === '"' && line[i+1] === '"') { cur += '"'; i++; continue; }
+        if (ch === '"') { inQuotes = !inQuotes; continue; }
+        if (ch === ',' && !inQuotes) { cells.push(cur); cur=''; continue; }
+        cur += ch;
+      }
+      cells.push(cur);
+      const obj = {}; headers.forEach((h, idx) => obj[h] = cells[idx] ?? '');
+      obj.height = obj.height ? parseFloat(obj.height) : null;
+      obj.lat = obj.lat ? parseFloat(obj.lat) : null;
+      obj.lng = obj.lng ? parseFloat(obj.lng) : null;
+      obj.acc = obj.acc ? parseFloat(obj.acc) : null;
+      obj.photos = []; // cannot import binaries from CSV
+      return obj;
+    });
+  }
+
+  // ===== Photos =====
+  function readFileAsDataURL(file) { return new Promise((res, rej)=>{ const r=new FileReader(); r.onload=()=>res(r.result); r.onerror=()=>rej(r.error); r.readAsDataURL(file); }); }
+  async function compressImageDataUrl(dataUrl) {
+    const img = new Image(); img.src = dataUrl; await img.decode();
+    const maxDim = 1600; let { width, height } = img;
+    if (width <= maxDim && height <= maxDim) return dataUrl;
+    const scale = Math.min(maxDim/width, maxDim/height);
+    const canvas = document.createElement('canvas'); canvas.width = Math.round(width*scale); canvas.height = Math.round(height*scale);
+    const ctx = canvas.getContext('2d'); ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+    return canvas.toDataURL('image/jpeg', 0.85);
+  }
+  async function handlePhotoSelected(file) {
+    if (!file) return;
+    try {
+      const raw = await readFileAsDataURL(file);
+      const dataUrl = await compressImageDataUrl(raw);
+      const photo = { dataUrl, createdAt: new Date().toISOString() };
+      if (!currentRecord) applyFormToCurrent();
+      if (!Array.isArray(currentRecord.photos)) currentRecord.photos = [];
+      if (photoMode === 'insert') {
+        notesInput.value = (notesInput.value || '') + `\n![photo ${new Date().toLocaleString()}](${dataUrl})`;
+        applyFormToCurrent();
+      } else {
+        currentRecord.photos.push(photo);
+      }
+      await dbPut(currentRecord);
+      renderPhotos(currentRecord.photos);
+      await refreshTable();
+      toast(photoMode === 'insert' ? 'Photo inserted into notes' : 'Photo attached');
+    } catch (e) { alert('Failed to process photo: ' + e); }
+    finally { photoFile.value = ''; }
+  }
+
+  // ===== Diagnostics & Reset =====
+  async function runDiagnostics() {
+    clearDiag();
+    appendDiag('URL: ' + location.href);
+    appendDiag('Protocol: ' + location.protocol);
+    appendDiag('isSecureContext: ' + (window.isSecureContext ? 'YES' : 'NO'));
+    appendDiag('Top-level window: ' + (window.top === window.self ? 'YES' : 'NO'));
+    appendDiag('UserAgent: ' + navigator.userAgent);
+    appendDiag('MediaDevices: ' + (navigator.mediaDevices ? 'YES' : 'NO'));
+    appendDiag('BarcodeDetector: ' + (supportsBarcodeDetector() ? 'YES' : 'NO'));
+    if (supportsBarcodeDetector()) {
+      try {
+        const sup = BarcodeDetector.getSupportedFormats ? await BarcodeDetector.getSupportedFormats() : '(not exposed)';
+        appendDiag('Supported formats: ' + JSON.stringify(sup));
+      } catch (e) { appendDiag('Supported formats query error: ' + e); }
+    }
+    try { const devices = await navigator.mediaDevices.enumerateDevices(); const vids = devices.filter(d => d.kind==='videoinput'); appendDiag('Camera count: ' + vids.length); vids.forEach((d,i)=>appendDiag(`  [${i}] ${d.label||d.deviceId}`)); } catch(e){ appendDiag('enumerateDevices error: ' + e); }
+    try { if (navigator.permissions && navigator.permissions.query) { const st = await navigator.permissions.query({ name: 'camera' }); appendDiag('Permissions camera state: ' + (st && st.state)); } else { appendDiag('Permissions API not available'); } } catch (e) { appendDiag('Permissions query error: ' + e); }
+  }
+  async function resetCache() {
+    try {
+      if ('caches' in window) {
+        const keys = await caches.keys(); for (const k of keys) await caches.delete(k);
+        appendDiag('Caches cleared: ' + JSON.stringify(keys));
+      }
+      if ('serviceWorker' in navigator) {
+        const regs = await navigator.serviceWorker.getRegistrations(); for (const r of regs) await r.unregister();
+        appendDiag('Service workers unregistered.');
+      }
+      alert('Cache cleared. Reloading...'); location.reload();
+    } catch (e) { alert('Reset failed: ' + e); }
+  }
+
+  // ===== Events =====
+  document.getElementById('pole-form').addEventListener('submit', saveRecord);
+  btnLocate.addEventListener('click', getLocation);
+  btnNew.addEventListener('click', () => { currentRecord = null; fillFormFromRecord({}); });
+  btnDelete.addEventListener('click', deleteRecord);
+
+  btnStartScan.addEventListener('click', startScan);
+  btnStopScan.addEventListener('click', stopScan);
+  cameraSelect.addEventListener('change', () => { if (isScanning) { stopScan().then(startScan); } });
+
+  searchInput.addEventListener('input', refreshTable);
+  tableBody.addEventListener('click', (e) => {
+    const btn = e.target.closest('button.link'); if (!btn) return;
+    const id = btn.dataset.id; loadRecord(id); window.scrollTo({ top: 0, behavior: 'smooth' });
+  });
+
+  document.getElementById('btn-export').addEventListener('click', async () => {
+    const csv = toCSV(await dbAll());
+    const blob = new Blob([csv], { type: 'text/csv;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a'); a.href = url; a.download = 'poles.csv'; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  });
+  document.getElementById('import-file').addEventListener('change', async (e) => {
+    const file = e.target.files[0]; if (!file) return;
+    const text = await file.text();
+    const rows = fromCSV(text);
+    for (const r of rows) {
+      if (!r.id) continue;
+      r.updatedAt = r.updatedAt || new Date().toISOString();
+      const existing = await dbGet(r.id);
+      if (existing && Array.isArray(existing.photos)) r.photos = existing.photos;
+      await dbPut(r);
+    }
+    await refreshTable(); toast('Import complete'); e.target.value = '';
+  });
+
+  btnPhotoAttach.addEventListener('click', () => { photoMode = 'attach'; photoFile.click(); });
+  btnPhotoInsert.addEventListener('click', () => { photoMode = 'insert'; photoFile.click(); });
+  photoFile.addEventListener('change', (e) => handlePhotoSelected(e.target.files[0]));
+
+  btnRunDiag.addEventListener('click', runDiagnostics);
+  btnResetCache.addEventListener('click', resetCache);
+
+  // ===== Init =====
+  async function refreshTable() {
+    const all = await dbAll();
+    const q = searchInput.value.trim().toUpperCase();
+    const rows = all.filter(r => !q || (r.id || '').toUpperCase().includes(q)).sort((a,b) => (a.id||'').localeCompare(b.id||''));
+    tableBody.innerHTML = '';
+    rows.forEach(r => {
+      const tr = document.createElement('tr'); tr.dataset.id = r.id;
+      const photoCount = Array.isArray(r.photos) ? r.photos.length : 0;
+      tr.innerHTML = `
+        <td><button class="link" data-id="${r.id}">${r.id||''}</button></td>
+        <td>${r.height ?? ''}</td>
+        <td>${r.status || ''}</td>
+        <td>${r.lat ?? ''}</td>
+        <td>${r.lng ?? ''}</td>
+        <td>${r.acc ?? ''}</td>
+        <td>${photoCount}</td>
+        <td>${r.updatedAt ? new Date(r.updatedAt).toLocaleString() : ''}</td>
+      `;
+      tableBody.appendChild(tr);
+    });
+  }
+
+  (async function init() {
+    await openDB();
+    await listCameras();
+    await refreshTable();
+    runDiagnostics();
+    if (!supportsBarcodeDetector()) {
+      showScanHelp('This browser does not support BarcodeDetector. On iPhone, please use iOS 17+ Safari. If you must support older versions, I can provide a build that bundles a decoder.');
+    }
+  })();
+  </script>
+</body>
+</html>
